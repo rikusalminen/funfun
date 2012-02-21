@@ -1,10 +1,12 @@
-import FunFun.Parser
+import Data.Map
+
 import Text.Parsec (parse)
 
 import FunFun.Parser
 import FunFun.Pretty
 import FunFun.Interpreter
 import FunFun.DependencyAnalysis
+import FunFun.TypeChecker
 
 testInterp src =
     case parse parser "" src of
@@ -13,8 +15,10 @@ testInterp src =
             putStrLn . prettyprint $ ast
             let optimized = depAnalysis ast
             putStrLn . prettyprint $ optimized
-            print (eval [] ast)
-            print (eval [] optimized)
+            -- print (eval [] ast)
+            print (typeTest optimized)
+            -- print (eval [] optimized)
+
 
 main = do
     forever (getLine >>= testInterp)

@@ -34,6 +34,8 @@ freeVariables' bound (Tree.Node (Identifier sym, _) [])
     | otherwise = Set.empty
 freeVariables' bound (Tree.Node (Lambda sym, _) [body]) =
     freeVariables' (Set.insert sym bound) body
+freeVariables' bound (Tree.Node (Let decls, pos) children) =
+    freeVariables' bound $ Tree.Node (LetRec decls, pos) children
 freeVariables' bound (Tree.Node (LetRec decls, _) [body]) =
     freeVariables' bound'' body
     where
