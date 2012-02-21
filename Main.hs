@@ -16,7 +16,10 @@ testInterp src =
             let optimized = depAnalysis ast
             putStrLn . prettyprint $ optimized
             -- print (eval [] ast)
-            print (typeTest optimized)
+            print optimized
+            case typeTest optimized of
+                Left err -> putStrLn err
+                (Right (_, t)) -> print t
             -- print (eval [] optimized)
 
 

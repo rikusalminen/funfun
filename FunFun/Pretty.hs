@@ -13,8 +13,11 @@ pretty (Tree.Node (Constant (IntValue x), _) []) = text . show $ x
 pretty (Tree.Node (Constant (FloatValue x), _) []) = text . show $ x
 pretty (Tree.Node (Constant (StringValue x), _) []) = text . show $ x
 pretty (Tree.Node (Application, _) params) =
-    sep . map prettyParam $ params
+    prettyParams params
     where
+    prettyParams (l@(Tree.Node (Application, _) _) : xs) =
+        pretty l <+> prettyParams xs
+    prettyParams params = sep . map prettyParam $ params
     prettyParam (Tree.Node (Identifier sym, _) []) = text sym
     prettyParam p@(Tree.Node ((Constant _), _) []) = pretty p
     prettyParam param = parens . pretty $ param

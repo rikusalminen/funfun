@@ -12,6 +12,10 @@ import FunFun.AST
 lambda pos =
     foldr (\ident expr -> Tree.Node (Lambda ident, pos) [expr])
 
+application :: [AST] -> AST
+application exps =
+    foldl1 (\l@(Tree.Node (_, pos) _) r -> Tree.Node (Application, pos) [l, r]) exps
+
 constExpr = do
     pos <- getPosition
     val <- fmap StringValue stringLiteral <|> fmap toConst naturalOrFloat
@@ -93,15 +97,14 @@ opExpr =
     inf op = do
         pos <- getPosition
         reservedOp op
-        return $ \l r -> Tree.Node (Application, pos) [Tree.Node (Identifier op, pos) [], l , r]
+        return $ \l r -> application [Tree.Node (Identifier op, pos) [], l , r]
 
 
 expr = do
-    pos <- getPosition
     ex <- many1 opExpr
     case ex of
       [x] -> return x
-      xs -> return $ Tree.Node (Application, pos) xs
+      xs -> return $ application xs
 
 parser = do
     ex <- expr

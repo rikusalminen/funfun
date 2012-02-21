@@ -48,7 +48,7 @@ substitute subst (Constructor name args) =
 
 compose :: Substitution -> Substitution -> Substitution
 compose left right =
-    Map.union right (Map.map (substitute right) left)
+    Map.union (Map.map (substitute left) right) left
 
 type TypeError = String
 type TC = ErrorT TypeError (State Integer)
