@@ -28,6 +28,7 @@ data TypeExp =
     deriving (Eq, Show)
 
 arrow t1 t2 = Constructor "Arrow" [t1, t2]
+boolType = Constructor "Bool" []
 intType = Constructor "Int" []
 floatType = Constructor "Float" []
 stringType = Constructor "String" []
@@ -41,7 +42,7 @@ typeVarsInExp (Constructor _ args) = Set.unions . map typeVarsInExp $ args
 substitute ::  Substitution -> TypeExp -> TypeExp
 substitute subst var@(TypeVar name) =
     case Map.lookup name subst of
-      Just val -> val
+      Just val -> substitute subst val
       Nothing -> var
 substitute subst (Constructor name args) =
     Constructor name (map (substitute subst) args)
@@ -171,6 +172,12 @@ tc env (Tree.Node (Lambda sym, _) [body]) = do
     let env' = Map.insert sym (Scheme [] var) env
     (sub, t) <- tc env' body
     return (sub, (substitute sub var) `arrow` t)
+
+tc env (Tree.Node (Conditional, _) [cond, cons, alt]) = do
+    (sub, [condt, const, altt]) <- tcList env [cond, cons, alt]
+    sub' <- unify sub (condt, boolType)
+    sub'' <- unify sub' (const, altt)
+    return (sub'', substitute sub'' const)
 
 tc env (Tree.Node (Let decls, _) [body]) = do
     let (names, vals) = unzip decls
