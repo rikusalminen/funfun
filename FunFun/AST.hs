@@ -3,7 +3,6 @@ module FunFun.AST (
     LetType(..),
     Expression(..),
     freeVariables,
-    freeVariables'
     ) where
 
 import Text.Parsec (SourcePos)
@@ -50,23 +49,16 @@ data Expression =
         }
     deriving (Eq, Show)
 
-freeVariables' :: Set.Set Symbol -> Expression -> Set.Set Symbol
-freeVariables' bound (Variable sym _)
-    | sym `Set.notMember` bound = Set.singleton sym
-    | otherwise = Set.empty
-freeVariables' bound (Lambda sym body _) =
-    freeVariables' (Set.insert sym bound) body
-freeVariables' bound (Let _ decls body _) =
-    freeVariables' bound'' body
-    where
-    bound'' = Set.unions (bound':(map (freeVariables' bound' . snd) decls))
-    bound' = Set.unions (bound:(map (Set.singleton . fst) decls))
-freeVariables' bound (Application f x _) =
-    freeVariables' bound f `Set.union` freeVariables' bound x
-freeVariables' bound (Conditional cond cons alt _)=
-    Set.unions (map (freeVariables' bound) [cond, cons, alt])
-freeVariables' _ _ = Set.empty
-
 freeVariables :: Expression -> Set.Set Symbol
-freeVariables =
-    freeVariables' Set.empty
+freeVariables (Constant _ _) =
+    Set.empty
+freeVariables (Variable sym _) =
+    Set.singleton sym
+freeVariables (Lambda x body _) =
+    Set.delete x (freeVariables body)
+freeVariables (Let _ decls body _) =
+    Set.unions (map freeVariables (body:map snd decls)) `Set.difference` Set.fromList (map fst decls)
+freeVariables (Application l r _) =
+    freeVariables l `Set.union` freeVariables r
+freeVariables (Conditional cond cons alt _) =
+    Set.unions (map freeVariables [cond, cons, alt])
