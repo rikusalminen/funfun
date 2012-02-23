@@ -1,7 +1,7 @@
 module FunFun.AST (
     Symbol,
+    LetType(..),
     Expression(..),
-    AST,
     freeVariables,
     freeVariables'
     ) where
@@ -9,41 +9,64 @@ module FunFun.AST (
 import Text.Parsec (SourcePos)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.Tree as Tree
 
 import FunFun.Values
 
 type Symbol = String
 
+data LetType = Rec | NonRec
+    deriving (Eq, Ord, Show)
+
 data Expression =
-    Constant AtomValue |
-    Identifier Symbol |
-    Application |
-    Lambda Symbol |
-    Conditional |
-    LetRec [(Symbol, AST)] |
-    Let [(Symbol, AST)] |
-    DoExpression
-    deriving (Show, Eq)
+    Constant {
+        constValue :: AtomValue,
+        sourcePos :: SourcePos
+        } |
+    Variable {
+        symbol :: Symbol,
+        sourcePos :: SourcePos
+        } |
+    Application {
+        function :: Expression,
+        argument :: Expression,
+        sourcePos :: SourcePos
+        } |
+    Lambda {
+        lambdaArg :: Symbol,
+        lambdaBody :: Expression,
+        sourcePos :: SourcePos
+        } |
+    Conditional {
+        condition :: Expression,
+        consequent :: Expression,
+        alternative :: Expression,
+        sourcePos :: SourcePos
+        } |
+    Let {
+        letType :: LetType,
+        letDeclarations :: [(Symbol, Expression)],
+        letBody :: Expression,
+        sourcePos :: SourcePos
+        }
+    deriving (Eq, Show)
 
-type AST = Tree.Tree (Expression, SourcePos)
-
-freeVariables' :: Set.Set Symbol -> AST -> Set.Set Symbol
-freeVariables' bound (Tree.Node (Identifier sym, _) [])
-    | not (sym `Set.member` bound) = Set.singleton sym
+freeVariables' :: Set.Set Symbol -> Expression -> Set.Set Symbol
+freeVariables' bound (Variable sym _)
+    | sym `Set.notMember` bound = Set.singleton sym
     | otherwise = Set.empty
-freeVariables' bound (Tree.Node (Lambda sym, _) [body]) =
+freeVariables' bound (Lambda sym body _) =
     freeVariables' (Set.insert sym bound) body
-freeVariables' bound (Tree.Node (Let decls, pos) children) =
-    freeVariables' bound $ Tree.Node (LetRec decls, pos) children
-freeVariables' bound (Tree.Node (LetRec decls, _) [body]) =
+freeVariables' bound (Let _ decls body _) =
     freeVariables' bound'' body
     where
     bound'' = Set.unions (bound':(map (freeVariables' bound' . snd) decls))
     bound' = Set.unions (bound:(map (Set.singleton . fst) decls))
-freeVariables' bound (Tree.Node _ exprs) =
-    Set.unions (map (freeVariables' bound) exprs)
+freeVariables' bound (Application f x _) =
+    freeVariables' bound f `Set.union` freeVariables' bound x
+freeVariables' bound (Conditional cond cons alt _)=
+    Set.unions (map (freeVariables' bound) [cond, cons, alt])
+freeVariables' _ _ = Set.empty
 
-freeVariables :: AST -> Set.Set Symbol
+freeVariables :: Expression -> Set.Set Symbol
 freeVariables =
     freeVariables' Set.empty

@@ -10,7 +10,6 @@ module FunFun.TypeChecker where
 import Control.Monad.State
 import Control.Monad.Error
 
-import qualified Data.Tree as Tree
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 import qualified Data.Maybe as Maybe
@@ -134,7 +133,7 @@ addDecls env names types = do
         let sub = Map.fromList [(old, TypeVar new) | (old, new) <- zip (Set.toList vars) newVars]
         return $ Scheme newVars (substitute sub t)
 
-tcList :: TypeEnv -> [AST] -> TC (Substitution, [TypeExp])
+tcList :: TypeEnv -> [Expression] -> TC (Substitution, [TypeExp])
 tcList env xs =
     foldM tc1 (Map.empty, []) xs
     where
@@ -142,14 +141,14 @@ tcList env xs =
         (sub', e) <- tc env ast
         return (compose sub' sub, exps ++ [e])
 
-tc :: TypeEnv -> AST -> TC (Substitution, TypeExp)
-tc env (Tree.Node (Constant value, _) []) =
+tc :: TypeEnv -> Expression -> TC (Substitution, TypeExp)
+tc env (Constant value _) =
     case value of
         (IntValue _) -> return (Map.empty, intType)
         (FloatValue _) -> return (Map.empty, floatType)
         (StringValue _) -> return (Map.empty, stringType)
 
-tc env (Tree.Node (Identifier ident, _) []) = do
+tc env (Variable ident _) = do
     newScheme <- newinstance scheme
     return (Map.empty, newScheme)
     where
@@ -159,33 +158,33 @@ tc env (Tree.Node (Identifier ident, _) []) = do
         newVars <- newTypeVars (length vars)
         return $ substitute (rename vars newVars) exp
 
-tc env (Tree.Node (Application, _) [e1, e2]) = do
+tc env (Application e1 e2 _) = do
     (sub, [t1, t2]) <- tcList env [e1, e2]
     varName <- newTypeVar
     let var = TypeVar varName
     sub' <- unify sub (t1, t2 `arrow` var)
     return (sub', substitute sub' var)
 
-tc env (Tree.Node (Lambda sym, _) [body]) = do
+tc env (Lambda sym body _) = do
     varName <- newTypeVar
     let var = TypeVar varName
     let env' = Map.insert sym (Scheme [] var) env
     (sub, t) <- tc env' body
     return (sub, (substitute sub var) `arrow` t)
 
-tc env (Tree.Node (Conditional, _) [cond, cons, alt]) = do
+tc env (Conditional cond cons alt _) = do
     (sub, [condt, const, altt]) <- tcList env [cond, cons, alt]
     sub' <- unify sub (condt, boolType)
     sub'' <- unify sub' (const, altt)
     return (sub'', substitute sub'' const)
 
-tc env (Tree.Node (Let decls, _) [body]) = do
+tc env (Let NonRec decls body _) = do
     let (names, vals) = unzip decls
     (sub, ts) <- tcList env vals
     env' <- addDecls (substituteEnv sub env) names ts
     tc env' body
 
-tc env (Tree.Node (LetRec decls, _) [body]) = do
+tc env (Let Rec decls body _) = do
     newVars <- newTypeVars (length decls)
     let (names, vals) = unzip decls
     let newEnv = (Map.fromList [(name, Scheme [] (TypeVar var)) | (name, var) <- zip names newVars])
@@ -203,49 +202,14 @@ tc env (Tree.Node (LetRec decls, _) [body]) = do
     (sub'', t) <- tc env'' body
     return $ (compose sub' sub'', t)
 
-tc _ _ = typeError "not defined"
-
-typeCheck :: TypeEnv -> AST -> Either TypeError (Substitution, TypeExp)
+typeCheck :: TypeEnv -> Expression -> Either TypeError (Substitution, TypeExp)
 typeCheck env ast = runTC (tc env ast)
 
 
-typeTest :: AST -> Either TypeError (Substitution, TypeExp)
+typeTest :: Expression -> Either TypeError (Substitution, TypeExp)
 typeTest ast =
     typeCheck env ast
     where
     env = Map.fromList
         [(sym, Scheme [] (TypeVar $ sym)) |
             sym <- Set.toList (freeVariables ast)]
-tcTest1 =
-    typeCheck Map.empty (Tree.Node (Constant (IntValue undefined), undefined) [])
-tcTest2 =
-    typeCheck
-        (Map.fromList [("f", Scheme ["alpha"] (TypeVar "alpha"))])
-        (Tree.Node (Identifier "f", undefined) [])
-tcTest3 =
-    typeCheck
-        (Map.fromList [("f", Scheme [] (TypeVar "alpha"))])
-        (Tree.Node (Application, undefined) [
-            (Tree.Node (Identifier "f", undefined) []),
-            (Tree.Node (Constant (IntValue undefined), undefined) [])
-            ])
-env3 = (Map.fromList [("f", Scheme ["alpha"] (TypeVar "alpha"))])
-source3 = [
-        (Tree.Node (Identifier "f", undefined) []),
-        (Tree.Node (Constant (IntValue undefined), undefined) [])
-        ]
-tcTest4 =
-    typeCheck
-        (Map.fromList [("f", Scheme ["alpha", "beta"] (TypeVar "alpha" `arrow` (TypeVar "alpha" `arrow` TypeVar "beta")))])
-        (Tree.Node (Application, undefined) [
-            (Tree.Node (Identifier "f", undefined) []),
-            (Tree.Node (Constant (IntValue undefined), undefined) [])
-            ])
-tcTest5 =
-    typeCheck
-        Map.empty
-        (Tree.Node (Lambda "x", undefined) [Tree.Node (Constant (IntValue 1), undefined) []])
-tcTest6 =
-    typeCheck
-        Map.empty
-        (Tree.Node (Lambda "x", undefined) [Tree.Node (Identifier "x", undefined) []])

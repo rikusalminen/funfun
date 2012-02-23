@@ -1,7 +1,5 @@
 module FunFun.Parser where
 
-import Data.Tree as Tree
-
 import Text.Parsec
 import Text.Parsec.Expr
 
@@ -10,16 +8,16 @@ import FunFun.Values
 import FunFun.AST
 
 lambda pos =
-    foldr (\ident expr -> Tree.Node (Lambda ident, pos) [expr])
+    foldr (\ident expr -> Lambda ident expr pos)
 
-application :: [AST] -> AST
+application :: [Expression] -> Expression
 application exps =
-    foldl1 (\l@(Tree.Node (_, pos) _) r -> Tree.Node (Application, pos) [l, r]) exps
+    foldl1 (\l r -> Application l r (sourcePos l)) exps
 
 constExpr = do
     pos <- getPosition
     val <- fmap StringValue stringLiteral <|> fmap toConst naturalOrFloat
-    return $ Tree.Node (Constant val, pos) []
+    return $ Constant val pos
     where
     toConst (Left x) = IntValue x
     toConst (Right y) = FloatValue y
@@ -40,7 +38,7 @@ letExpr = do
     binds <- declarations
     reserved "in"
     ex <- expr
-    return $ Tree.Node (LetRec binds, pos) [ex]
+    return $ Let Rec binds ex pos
 
 ifExpr = do
     pos <- getPosition
@@ -51,7 +49,7 @@ ifExpr = do
     return $ elifDesugar alt conditions
     where
     elifDesugar =
-        foldr (\(cond, cons, pos) alt -> Tree.Node (Conditional, pos) [cond, cons, alt])
+        foldr (\(cond, cons, pos) alt -> Conditional cond cons alt pos)
     conditional = do
         pos <- getPosition
         l <- expr
@@ -67,26 +65,18 @@ lambdaExpr = do
     ex <- expr
     return $ lambda pos ex syms
 
-doExpr = do
-    pos <- getPosition
-    reserved "do"
-    exprs <- semiSep1 expr
-    reserved "done"
-    return $ Tree.Node (DoExpression, pos) exprs
-
 basicExpr =
     ident <|>
     constExpr <|>
     letExpr <|>
     ifExpr <|>
     lambdaExpr <|>
-    doExpr <|>
     parens expr
     where
     ident = do
         pos <- getPosition
         sym <- identifier
-        return $ Tree.Node (Identifier sym, pos) []
+        return $ Variable sym pos
 
 opExpr =
     buildExpressionParser opTable basicExpr
@@ -97,7 +87,7 @@ opExpr =
     inf op = do
         pos <- getPosition
         reservedOp op
-        return $ \l r -> application [Tree.Node (Identifier op, pos) [], l , r]
+        return $ \l r -> application [Variable op pos, l , r]
 
 
 expr = do

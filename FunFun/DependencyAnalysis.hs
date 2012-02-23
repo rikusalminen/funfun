@@ -1,7 +1,6 @@
 module FunFun.DependencyAnalysis where
 
 import qualified Data.Set as Set
-import qualified Data.Tree as Tree
 import qualified Data.Graph as Graph
 
 import FunFun.AST
@@ -15,26 +14,21 @@ deps decls = [
     where
     names = Set.fromList $ map fst decls
 
-depAnalysis (Tree.Node (LetRec decls, pos) [body]) =
+depAnalysis (Let Rec decls body pos) =
     foldr interleave (depAnalysis body) sccs
     where
-    sccs = Graph.stronglyConnCompR . deps $ decls
+    decls' = [(name, depAnalysis val) | (name, val) <- decls]
+    sccs = Graph.stronglyConnCompR . deps $ decls'
     interleave (Graph.AcyclicSCC (def, name, _)) body =
-        Tree.Node (Let [(name, def)], pos) [body]
+        Let NonRec [(name, def)] body pos
     interleave (Graph.CyclicSCC ds) body =
-        Tree.Node (LetRec [(name, def) | (def, name, _) <- ds], pos) [body]
-depAnalysis (Tree.Node x exprs) =
-    Tree.Node x (map depAnalysis exprs)
-
-testCase =
-    ast
-    where
-    (Right ast) = parse parser "" src
-    src = "let a = 1, b = a, c = h b d, d = c, f = g h a, g = f, h = g in x"
-    -- src = "let a = 1, b = 2, c = 3 in let d = 4, e = 5 in x"
-
-testi = do
-    putStrLn . prettyprint $ testCase
-    putStrLn . prettyprint . depAnalysis $ testCase
-
-
+        Let Rec [(name, def) | (def, name, _) <- ds] body pos
+depAnalysis (Let NonRec decls body pos) =
+    Let NonRec [(name, depAnalysis val) | (name, val) <- decls] (depAnalysis body) pos
+depAnalysis (Application l r pos) =
+    Application (depAnalysis l) (depAnalysis r) pos
+depAnalysis (Conditional cond cons alt pos) =
+    Conditional (depAnalysis cond) (depAnalysis cons) (depAnalysis alt) pos
+depAnalysis (Lambda var body pos) =
+    Lambda var (depAnalysis body) pos
+depAnalysis x = x

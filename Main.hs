@@ -1,7 +1,9 @@
 import Data.Map
+import qualified Data.Set as Set
 
 import Text.Parsec (parse)
 
+import FunFun.AST
 import FunFun.Parser
 import FunFun.Pretty
 import FunFun.Interpreter
@@ -16,10 +18,11 @@ testInterp src =
             let optimized = depAnalysis ast
             putStrLn . prettyprint $ optimized
             -- print (eval [] ast)
-            print optimized
             case typeTest optimized of
                 Left err -> putStrLn err
-                (Right (_, t)) -> print t
+                (Right (sub, t)) -> do
+                    print sub
+                    print t
             -- print (eval [] optimized)
 
 
