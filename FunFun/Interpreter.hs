@@ -32,6 +32,10 @@ eval env (Conditional cond cons alt _) =
     eval env (if isTrue $ eval env cond then cons else alt)
 eval env (Let NonRec binds body _) =
     eval (Map.fromList [(name, eval env expr) | (name, expr) <- binds] : env) body
+eval env (Let Rec binds body _) =
+    eval (Map.fromList (zip (map fst binds) vals) : env) body
+    where
+    vals = map (eval (Map.fromList [(x, undefined) | (x, _) <- binds] : env)) (map snd binds)
 
 apply :: Value -> Value -> Value
 apply (Closure env (Lambda sym body _)) value =
