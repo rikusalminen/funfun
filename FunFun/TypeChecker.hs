@@ -1,4 +1,8 @@
-module FunFun.TypeChecker where
+module FunFun.TypeChecker (
+    TypeError,
+    typeCheck,
+    typeTest
+    ) where
 
 {-
     Based on Peter Hancock's type checker in Chapter 9 of the book
@@ -17,38 +21,8 @@ import Control.Monad.ST
 import Data.STRef
 
 import FunFun.Values
+import FunFun.Types
 import FunFun.AST
-
-type TypeName = String
-
-data TypeExp =
-    TypeVar TypeName
-    | Constructor TypeName [TypeExp]
-    deriving (Eq, Show)
-
-arrow t1 t2 = Constructor "Arrow" [t1, t2]
-boolType = Constructor "Bool" []
-intType = Constructor "Int" []
-floatType = Constructor "Float" []
-stringType = Constructor "String" []
-
-type Substitution = Map.Map TypeName TypeExp
-
-typeVarsInExp ::  TypeExp -> Set.Set TypeName
-typeVarsInExp (TypeVar name) = Set.singleton name
-typeVarsInExp (Constructor _ args) = Set.unions . map typeVarsInExp $ args
-
-substitute ::  Substitution -> TypeExp -> TypeExp
-substitute subst var@(TypeVar name) =
-    case Map.lookup name subst of
-      Just val -> substitute subst val
-      Nothing -> var
-substitute subst (Constructor name args) =
-    Constructor name (map (substitute subst) args)
-
-compose :: Substitution -> Substitution -> Substitution
-compose left right =
-    Map.union (Map.map (substitute left) right) left
 
 type TypeError = String
 type TC = ErrorT TypeError (State Integer)
@@ -96,31 +70,6 @@ unify subst ((Constructor con ls), (Constructor con' rs))
         typeError $ "Constructors don't match: " ++ con ++ " /= " ++ con'
     | otherwise =
         foldM unify subst (zip ls rs)
-
-testCase1 = runTC $ unify Map.empty ((TypeVar "x"),(TypeVar "y"))
-testCase2 = runTC $ unify Map.empty ((TypeVar "x"),(Constructor "Foo" [TypeVar "y"]))
-
-data TypeScheme = Scheme [TypeName] TypeExp
-
-unknownsScheme :: TypeScheme -> Set.Set TypeName
-unknownsScheme (Scheme vars exp) =
-    typeVarsInExp exp `Set.intersection` (Set.fromList vars)
-
-substituteScheme :: Substitution -> TypeScheme -> TypeScheme
-substituteScheme subst (Scheme vars exp) =
-    Scheme vars (substitute (subst `Map.difference` varsMap) exp)
-    where
-    varsMap = Map.fromList $ zip vars (repeat undefined)
-
-type TypeEnv = Map.Map Symbol TypeScheme
-
-unknownsEnv ::  Map.Map k TypeScheme -> Set.Set TypeName
-unknownsEnv env =
-    Set.unions (map unknownsScheme (Map.elems env))
-
-substituteEnv :: Substitution -> TypeEnv -> TypeEnv
-substituteEnv subst env =
-    Map.map (substituteScheme subst) env
 
 addDecls :: TypeEnv -> [TypeName] -> [TypeExp] -> TC TypeEnv
 addDecls env names types = do
