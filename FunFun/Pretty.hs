@@ -45,6 +45,8 @@ prettyType x =
         prettyType l <+> text "->" <+> prettyType' r
     prettyType' (Constructor "Arrow" [l, r]) =
         prettyType l <+> text "->" <+> prettyType r
+    prettyType' (Constructor name types) =
+        text name <+> hsep (map prettyType types)
 
 prettyScheme (Scheme [] exp) =
     prettyType exp

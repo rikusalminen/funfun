@@ -2,11 +2,14 @@ module FunFun.Parser (
     parser
     ) where
 
+import qualified Data.Set as Set
+
 import Text.Parsec
 import Text.Parsec.Expr
 
 import FunFun.Language
 import FunFun.Values
+import FunFun.Types
 import FunFun.AST
 
 lambda pos =
@@ -86,11 +89,39 @@ applicationExpr = do
         [x] -> return x
         xs -> return $ application xs
 
+typeVar =
+    ((natural >>= return . show) <|> identifier) >>= return . TypeVar
+
+typeConstructor = do
+    constructor <- typename
+    types <- many typeArg
+    return $ Constructor constructor types
+    where
+    typeArg =
+        (do { name <- typename ; return $ Constructor name [] }) <|>
+        parens typeConstructor <|>
+        typeVar
+
+typeExp = typeVar <|> typeConstructor
+
+test = parse typeExp "" "Arrow Int"
+
+typeScheme = do
+    exp <- typeExp
+    return $ Scheme (Set.toList (typeVarsInExp exp)) exp
+
+typeDeclTail = do
+    pos <- getPosition
+    reservedOp "::"
+    scheme <- typeScheme
+    return $ \expr -> (TypeDecl scheme expr pos)
+
 opExpr =
     buildExpressionParser opTable applicationExpr
     where
     opTable = [
-        [Infix (inf "+") AssocLeft]
+        [Infix (inf "+") AssocLeft],
+        [Postfix typeDeclTail]
         ]
     inf op = do
         pos <- getPosition

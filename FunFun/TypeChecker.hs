@@ -150,5 +150,9 @@ tc env (Let Rec decls body _) = do
     (sub'', t) <- tc env'' body
     return $ (compose sub' sub'', t)
 
+tc env (TypeDecl scheme body _) =
+    -- TODO: unify type of body with the scheme in the declaration
+    tc env body
+
 typeCheck :: TypeEnv -> Expression -> Either TypeError (Substitution, TypeExp)
 typeCheck env ast = runTC (tc env ast)
