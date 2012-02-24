@@ -1,4 +1,6 @@
-module FunFun.Parser where
+module FunFun.Parser (
+    parser
+    ) where
 
 import Text.Parsec
 import Text.Parsec.Expr
@@ -78,8 +80,14 @@ basicExpr =
         sym <- identifier
         return $ Variable sym pos
 
+applicationExpr = do
+    args <- many1 basicExpr
+    case args of
+        [x] -> return x
+        xs -> return $ application xs
+
 opExpr =
-    buildExpressionParser opTable basicExpr
+    buildExpressionParser opTable applicationExpr
     where
     opTable = [
         [Infix (inf "+") AssocLeft]
@@ -90,11 +98,7 @@ opExpr =
         return $ \l r -> application [Variable op pos, l , r]
 
 
-expr = do
-    ex <- many1 opExpr
-    case ex of
-      [x] -> return x
-      xs -> return $ application xs
+expr = opExpr
 
 parser = do
     ex <- expr
