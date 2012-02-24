@@ -1,7 +1,6 @@
 module FunFun.TypeChecker (
     TypeError,
-    typeCheck,
-    typeTest
+    typeCheck
     ) where
 
 {-
@@ -153,12 +152,3 @@ tc env (Let Rec decls body _) = do
 
 typeCheck :: TypeEnv -> Expression -> Either TypeError (Substitution, TypeExp)
 typeCheck env ast = runTC (tc env ast)
-
-
-typeTest :: Expression -> Either TypeError (Substitution, TypeExp)
-typeTest ast =
-    typeCheck env ast
-    where
-    env = Map.fromList
-        [(sym, Scheme [] (TypeVar $ sym)) |
-            sym <- Set.toList (freeVariables ast)]

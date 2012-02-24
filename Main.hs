@@ -1,13 +1,17 @@
-import Data.Map
+module Main where
+
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import Text.Parsec (parse)
+import Text.PrettyPrint (render)
 
 import FunFun.AST
 import FunFun.Parser
 import FunFun.Pretty
 import FunFun.Interpreter
 import FunFun.DependencyAnalysis
+import FunFun.Types
 import FunFun.TypeChecker
 
 testInterp src =
@@ -17,13 +21,13 @@ testInterp src =
             putStrLn . prettyprint $ ast
             let optimized = depAnalysis ast
             putStrLn . prettyprint $ optimized
-            -- print (eval [] ast)
-            case typeTest optimized of
-                Left err -> putStrLn err
-                (Right (sub, t)) -> do
-                    print sub
-                    print t
-            -- print (eval [] optimized)
+            let typeEnv = Map.fromList [(x, Scheme [] (TypeVar x)) | x <- Set.toList (freeVariables optimized)]
+            case typeCheck typeEnv optimized of
+                Left err -> print err
+                Right (sub, exp) -> do
+                    let decls = [(TypeDecl scheme (Variable name undefined) undefined) | (name, scheme) <- Map.toList (substituteEnv sub typeEnv)]
+                    mapM_ (putStrLn . prettyprint) decls
+                    putStrLn (render . prettyType $ (substitute sub exp))
 
 
 main = do

@@ -4,6 +4,7 @@ import Text.PrettyPrint
 
 import FunFun.AST
 import FunFun.Values
+import FunFun.Types
 
 pretty (Variable sym _) =
     text sym
@@ -30,5 +31,24 @@ pretty (Let rec decls x _) =
     where
     prettyDecl (sym, ast) =
         text sym <+> text "=" <+> pretty ast
+pretty (TypeDecl scheme body _) =
+    pretty body <+> text "::" <+> prettyScheme scheme
+
+prettyType (TypeVar var) =
+    text var
+prettyType (Constructor name []) =
+    text name
+prettyType x =
+    parens $ prettyType' x
+    where
+    prettyType' (Constructor "Arrow" [l, r@(Constructor "Arrow" [r1, r2])]) =
+        prettyType l <+> text "->" <+> prettyType' r
+    prettyType' (Constructor "Arrow" [l, r]) =
+        prettyType l <+> text "->" <+> prettyType r
+
+prettyScheme (Scheme [] exp) =
+    prettyType exp
+prettyScheme (Scheme vars exp) =
+    text "forall" <+> hsep (map text vars) <> text "." <+> prettyType exp
 
 prettyprint = render . pretty

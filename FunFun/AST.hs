@@ -68,3 +68,5 @@ freeVariables (Application l r _) =
     freeVariables l `Set.union` freeVariables r
 freeVariables (Conditional cond cons alt _) =
     Set.unions (map freeVariables [cond, cons, alt])
+freeVariables (TypeDecl _ body _) =
+    freeVariables body
