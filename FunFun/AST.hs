@@ -10,6 +10,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import FunFun.Values
+import FunFun.Types
 
 type Symbol = String
 
@@ -45,6 +46,11 @@ data Expression =
         letType :: LetType,
         letDeclarations :: [(Symbol, Expression)],
         letBody :: Expression,
+        sourcePos :: SourcePos
+        } |
+    TypeDecl {
+        typeDecl :: TypeScheme,
+        typeDeclBody :: Expression,
         sourcePos :: SourcePos
         }
     deriving (Eq, Show)

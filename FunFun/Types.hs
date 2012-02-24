@@ -21,8 +21,6 @@ module FunFun.Types (
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 
-import FunFun.AST
-
 type TypeName = String
 
 data TypeExp =
@@ -68,7 +66,7 @@ substituteScheme subst (Scheme vars exp) =
     where
     varsMap = Map.fromList $ zip vars (repeat undefined)
 
-type TypeEnv = Map.Map Symbol TypeScheme
+type TypeEnv = Map.Map String TypeScheme
 
 unknownsEnv ::  Map.Map k TypeScheme -> Set.Set TypeName
 unknownsEnv env =
