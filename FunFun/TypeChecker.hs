@@ -150,9 +150,12 @@ tc env (Let Rec decls body _) = do
     (sub'', t) <- tc env'' body
     return $ (compose sub' sub'', t)
 
-tc env (TypeDecl scheme body _) =
-    -- TODO: unify type of body with the scheme in the declaration
-    tc env body
+tc env (TypeDecl (Scheme names t) body _) = do
+    typevars <- newTypeVars (length names)
+    let rename = Map.fromList (zip names [TypeVar var | var <- typevars])
+    (sub, bodyt) <- tc env body
+    sub' <- unify sub (substitute rename t, bodyt)
+    return (sub', bodyt)
 
 typeCheck :: TypeEnv -> Expression -> Either TypeError (Substitution, TypeExp)
 typeCheck env ast = runTC (tc env ast)
