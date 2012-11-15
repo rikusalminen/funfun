@@ -1,4 +1,7 @@
-module FunFun.Pretty where
+module FunFun.Pretty (
+    prettyprint,
+    prettyprintType
+    ) where
 
 import Text.PrettyPrint
 
@@ -11,16 +14,14 @@ pretty (Variable sym _) =
 pretty (Constant (IntValue x) _) = text . show $ x
 pretty (Constant (FloatValue x) _) = text . show $ x
 pretty (Constant (StringValue x) _) = text . show $ x
-pretty (Application left right _) =
-    prettyFun left <+> prettyParam right
+pretty (Application fun args _) =
+    hsep (map prettyParam (fun:args))
     where
-    prettyFun f@(Application _ _ _) = pretty f
-    prettyFun x = prettyParam x
     prettyParam (Variable sym _) = text sym
     prettyParam p@(Constant _ _) = pretty p
     prettyParam param = parens . pretty $ param
-pretty (Lambda sym body _) =
-    text "lambda" <+> text sym <> text ":" <+> pretty body
+pretty (Lambda syms body _) =
+    text "lambda" <+> hsep (map text syms) <> text ":" <+> pretty body
 pretty (Conditional cond cons alt _) =
     text "if" <+> pretty cond $$ nest 4 (text "then" <+> pretty cons $$ text "else" <+> pretty alt)
 pretty (Let rec decls x _) =
@@ -36,6 +37,8 @@ pretty (TypeDecl scheme body _) =
 
 prettyType (TypeVar var) =
     text var
+prettyType (FunctionType args ret) =
+    (parens . hsep . punctuate comma . map prettyType) args <+> text "->" <+> prettyType ret
 prettyType (Constructor name []) =
     text name
 prettyType x =
@@ -54,3 +57,4 @@ prettyScheme (Scheme vars exp) =
     text "forall" <+> hsep (map text vars) <> text "." <+> prettyType exp
 
 prettyprint = render . pretty
+prettyprintType = render . prettyType

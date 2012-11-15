@@ -1,7 +1,6 @@
 module FunFun.Types (
     TypeName,
     TypeExp(..),
-    arrow,
     boolType,
     intType,
     floatType,
@@ -25,10 +24,10 @@ type TypeName = String
 
 data TypeExp =
     TypeVar TypeName
+    | FunctionType [TypeExp] TypeExp
     | Constructor TypeName [TypeExp]
     deriving (Eq, Show)
 
-arrow t1 t2 = Constructor "Arrow" [t1, t2]
 boolType = Constructor "Bool" []
 intType = Constructor "Int" []
 floatType = Constructor "Float" []
@@ -36,6 +35,7 @@ stringType = Constructor "String" []
 
 typeVarsInExp ::  TypeExp -> Set.Set TypeName
 typeVarsInExp (TypeVar name) = Set.singleton name
+typeVarsInExp (FunctionType args ret) = Set.unions . map typeVarsInExp $ ret:args
 typeVarsInExp (Constructor _ args) = Set.unions . map typeVarsInExp $ args
 
 type Substitution = Map.Map TypeName TypeExp
@@ -45,6 +45,8 @@ substitute subst var@(TypeVar name) =
     case Map.lookup name subst of
       Just val -> substitute subst val
       Nothing -> var
+substitute subst (FunctionType args ret) =
+    FunctionType (map (substitute subst) args) (substitute subst ret)
 substitute subst (Constructor name args) =
     Constructor name (map (substitute subst) args)
 

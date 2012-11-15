@@ -28,11 +28,11 @@ data Expression =
         } |
     Application {
         function :: Expression,
-        argument :: Expression,
+        arguments :: [Expression],
         sourcePos :: SourcePos
         } |
     Lambda {
-        lambdaArg :: Symbol,
+        lambdaArgs :: [Symbol],
         lambdaBody :: Expression,
         sourcePos :: SourcePos
         } |
@@ -60,12 +60,12 @@ freeVariables (Constant _ _) =
     Set.empty
 freeVariables (Variable sym _) =
     Set.singleton sym
-freeVariables (Lambda x body _) =
-    Set.delete x (freeVariables body)
+freeVariables (Lambda args body _) =
+    freeVariables body `Set.difference` Set.fromList args
 freeVariables (Let _ decls body _) =
     Set.unions (map freeVariables (body:map snd decls)) `Set.difference` Set.fromList (map fst decls)
-freeVariables (Application l r _) =
-    freeVariables l `Set.union` freeVariables r
+freeVariables (Application fun args _) =
+    Set.unions . map freeVariables $ fun:args
 freeVariables (Conditional cond cons alt _) =
     Set.unions (map freeVariables [cond, cons, alt])
 freeVariables (TypeDecl _ body _) =

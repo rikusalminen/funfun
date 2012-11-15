@@ -25,8 +25,8 @@ depAnalysis (Let Rec decls body pos) =
         Let Rec [(name, def) | (def, name, _) <- ds] body pos
 depAnalysis (Let NonRec decls body pos) =
     Let NonRec [(name, depAnalysis val) | (name, val) <- decls] (depAnalysis body) pos
-depAnalysis (Application l r pos) =
-    Application (depAnalysis l) (depAnalysis r) pos
+depAnalysis (Application fun args pos) =
+    Application (depAnalysis fun) (map depAnalysis args) pos
 depAnalysis (Conditional cond cons alt pos) =
     Conditional (depAnalysis cond) (depAnalysis cons) (depAnalysis alt) pos
 depAnalysis (Lambda var body pos) =

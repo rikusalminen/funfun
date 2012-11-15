@@ -24,8 +24,8 @@ eval env (Constant val _) =
     Atom val
 eval env (Variable sym _) =
     envLookup env sym
-eval env (Application fun arg _) =
-    apply (eval env fun) (eval env arg)
+eval env (Application fun args _) =
+    apply (eval env fun) (map (eval env) args)
 eval env lambda@(Lambda _ _ _) =
     Closure env lambda
 eval env (Conditional cond cons alt _) =
@@ -37,6 +37,6 @@ eval env (Let Rec binds body _) =
     where
     vals = map (eval (Map.fromList [(x, undefined) | (x, _) <- binds] : env)) (map snd binds)
 
-apply :: Value -> Value -> Value
-apply (Closure env (Lambda sym body _)) value =
-    eval (Map.singleton sym value : env) body
+apply :: Value -> [Value] -> Value
+apply (Closure env (Lambda syms body _)) values =
+    eval (Map.fromList (zip syms values) : env) body

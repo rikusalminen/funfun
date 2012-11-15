@@ -16,12 +16,11 @@ import Control.Monad.Error
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 import qualified Data.Maybe as Maybe
-import Control.Monad.ST
-import Data.STRef
 
 import FunFun.Values
 import FunFun.Types
 import FunFun.AST
+import FunFun.Pretty
 
 type TypeError = String
 type TC = ErrorT TypeError (State Integer)
@@ -64,11 +63,19 @@ unify subst (var@(TypeVar name), val)
         unify subst ((substitute subst var), (substitute subst val))
 unify subst (val, var@(TypeVar name)) =
     unify subst (var, val)
+unify subst (l@(FunctionType argsl retl), r@(FunctionType argsr retr))
+    | length argsl /= length argsr =
+        typeError $ "Function types don't match: " ++ prettyprintType l ++ " <=> " ++ prettyprintType r
+    | otherwise = do
+    subst' <- foldM unify subst (zip argsl argsr)
+    unify subst' (retl, retr)
 unify subst ((Constructor con ls), (Constructor con' rs))
     | con /= con' =
         typeError $ "Constructors don't match: " ++ con ++ " /= " ++ con'
     | otherwise =
         foldM unify subst (zip ls rs)
+unify _ (l, r) =
+    typeError $ "Unification failed: " ++ prettyprintType l ++ " <=> " ++ prettyprintType r
 
 addDecls :: TypeEnv -> [TypeName] -> [TypeExp] -> TC TypeEnv
 addDecls env names types = do
@@ -106,19 +113,18 @@ tc env (Variable ident _) = do
         newVars <- newTypeVars (length vars)
         return $ substitute (rename vars newVars) exp
 
-tc env (Application e1 e2 _) = do
-    (sub, [t1, t2]) <- tcList env [e1, e2]
+tc env (Application fun args _) = do
+    (sub, (t:ts)) <- tcList env (fun:args)
     varName <- newTypeVar
     let var = TypeVar varName
-    sub' <- unify sub (t1, t2 `arrow` var)
+    sub' <- unify sub (t, FunctionType ts var)
     return (sub', substitute sub' var)
 
-tc env (Lambda sym body _) = do
-    varName <- newTypeVar
-    let var = TypeVar varName
-    let env' = Map.insert sym (Scheme [] var) env
+tc env (Lambda syms body _) = do
+    vars <- fmap (map TypeVar) $ newTypeVars (length syms)
+    let env' = Map.union env (Map.fromList [(sym, (Scheme [] var)) | (sym, var) <- zip syms vars])
     (sub, t) <- tc env' body
-    return (sub, (substitute sub var) `arrow` t)
+    return (sub, FunctionType (map (substitute sub) vars) t)
 
 tc env (Conditional cond cons alt _) = do
     (sub, [condt, const, altt]) <- tcList env [cond, cons, alt]

@@ -12,13 +12,6 @@ import FunFun.Values
 import FunFun.Types
 import FunFun.AST
 
-lambda pos =
-    foldr (\ident expr -> Lambda ident expr pos)
-
-application :: [Expression] -> Expression
-application exps =
-    foldl1 (\l r -> Application l r (sourcePos l)) exps
-
 constExpr = do
     pos <- getPosition
     val <- fmap StringValue stringLiteral <|> fmap toConst naturalOrFloat
@@ -35,7 +28,7 @@ declarations =
         val <- expr
         case ids of
           [sym] -> return (sym, val)
-          (name:params) -> return $ (name, lambda pos val params)
+          (name:params) -> return $ (name, Lambda params val pos)
 
 letExpr = do
     pos <- getPosition
@@ -68,7 +61,7 @@ lambdaExpr = do
     syms <- many identifier
     reservedOp ":"
     ex <- expr
-    return $ lambda pos ex syms
+    return $ Lambda syms ex pos
 
 basicExpr =
     ident <|>
@@ -87,7 +80,7 @@ applicationExpr = do
     args <- many1 basicExpr
     case args of
         [x] -> return x
-        xs -> return $ application xs
+        (fun:args) -> return $ Application fun args (sourcePos fun)
 
 typeVar =
     ((natural >>= return . show) <|> identifier) >>= return . TypeVar
@@ -102,9 +95,13 @@ typeConstructor = do
         parens typeConstructor <|>
         typeVar
 
-typeExp = typeVar <|> typeConstructor
+typeFunction = do
+    args <- parens . commaSep1 $ typeExp
+    reservedOp "->"
+    ret <- typeExp
+    return $ FunctionType args ret
 
-test = parse typeExp "" "Arrow Int"
+typeExp = typeVar <|> typeFunction <|> typeConstructor
 
 typeScheme = do
     exp <- typeExp
@@ -126,7 +123,7 @@ opExpr =
     inf op = do
         pos <- getPosition
         reservedOp op
-        return $ \l r -> application [Variable op pos, l , r]
+        return $ \l r -> Application (Variable op pos) [l , r] pos
 
 
 expr = opExpr

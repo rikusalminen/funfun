@@ -4,7 +4,6 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import Text.Parsec (parse)
-import Text.PrettyPrint (render)
 
 import FunFun.AST
 import FunFun.Parser
@@ -27,7 +26,7 @@ testInterp src =
                 Right (sub, exp) -> do
                     let decls = [(TypeDecl scheme (Variable name undefined) undefined) | (name, scheme) <- Map.toList (substituteEnv sub typeEnv)]
                     mapM_ (putStrLn . prettyprint) decls
-                    putStrLn (render . prettyType $ (substitute sub exp))
+                    putStrLn (prettyprintType (substitute sub exp))
 
 
 main = do
