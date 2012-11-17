@@ -54,3 +54,4 @@ prettyScheme (Scheme vars exp) =
     text "forall" <+> hsep (map text vars) <> text "." <+> prettyType exp
 
 prettyprint = render . pretty
+prettyprintType = render . prettyType
