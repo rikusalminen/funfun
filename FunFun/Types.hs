@@ -4,6 +4,8 @@ module FunFun.Types (
     boolType,
     intType,
     floatType,
+    funArgs,
+    funRet,
     stringType,
     typeVarsInExp,
     Substitution(..),
@@ -32,6 +34,14 @@ boolType = Constructor "Bool" []
 intType = Constructor "Int" []
 floatType = Constructor "Float" []
 stringType = Constructor "String" []
+
+funArgs (Constructor "Arrow" [l, r]) =
+    l : funArgs r
+funArgs _ = []
+
+funRet (Constructor "Arrow" [_, r]) =
+    funRet r
+funRet x = x
 
 typeVarsInExp ::  TypeExp -> Set.Set TypeName
 typeVarsInExp (TypeVar name) = Set.singleton name
