@@ -31,7 +31,7 @@ compile filename source = do
 
     bracket (withCString filename moduleCreateWithName) disposeModule $ \mod -> do
         let compilerEnv = []
-        fun <- compileFunction mod compilerEnv "fooo" ["x"] optimized (Constructor "Arrow" [texp', texp'])
+        fun <- compileFunction mod compilerEnv "fooo" ["x"] optimized (FunctionType [texp'] texp')
 
         withCString (filename ++ ".bc") (writeBitcodeToFile mod)
         return ()

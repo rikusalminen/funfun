@@ -42,8 +42,8 @@ compileType (Constructor "Float" []) =
     floatType
 compileType (Constructor "Bool" []) =
     int1Type
-compileType t@(Constructor "Arrow" _) =
-    funType (compileType (funRet t)) (map compileType (funArgs t))
+compileType (FunctionType args ret) =
+    funType (compileType ret) (map compileType args)
 compileType _ =
     error "Unknown type"
 
@@ -75,7 +75,7 @@ compileExp builder fun env exp typ =
     error "Invalid expression"
 
 compileFunction :: ModuleRef -> CompilerEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
-compileFunction mod env name args exp typ = do
+compileFunction mod env name args exp typ@(FunctionType argt ret) = do
     let ft = compileType typ
     f <- withCString name (\cs -> addFunction mod cs ft)
     setLinkage f (fromLinkage ExternalLinkage)
@@ -84,11 +84,11 @@ compileFunction mod env name args exp typ = do
     builder <- createBuilder
     positionAtEnd builder bb
 
-    let frame = Map.fromList [(sym, CompiledValue (getParam f (fromIntegral i)) typ) | (i, sym, typ) <- zip3 [0..] args (funArgs typ)]
+    let frame = Map.fromList [(sym, CompiledValue (getParam f (fromIntegral i)) typ) | (i, sym, typ) <- zip3 [0..] args argt]
     let frame' = Map.fromList [(name, CompiledValue f typ)]
     let env' = frame : frame' : env
 
-    e <- compileExp f builder env' exp (funRet typ)
+    e <- compileExp f builder env' exp ret
     let val e = case e of
             CompiledValue val typ -> val
             CompiledBuiltIn f -> val (f [])
@@ -106,7 +106,7 @@ compileTest name = do
     --let exp = Variable "x" undefined
     let exp = Constant (IntValue 1234) undefined
     let args = ["x"]
-    let typ = Constructor "Arrow" [Constructor "Int" [], Constructor "Int" []]
+    let typ = FunctionType [Constructor "Int" []] (Constructor "Int" [])
     -- let args = []
     -- let typ = Constructor "Int" []
     bracket (withCString modname moduleCreateWithName) disposeModule $ \mod -> do
