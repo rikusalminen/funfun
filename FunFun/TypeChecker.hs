@@ -1,5 +1,10 @@
 module FunFun.TypeChecker (
     TypeError,
+    TC(),
+    runTC,
+    unify,
+    tcList,
+    tc,
     typeCheck
     ) where
 
