@@ -6,6 +6,8 @@ module FunFun.LLVMCompiler (
     compileFunction,
     compileModule,
     builtinPlus,
+    builtinMinus,
+    builtinMul,
     builtinEq
     ) where
 
@@ -173,11 +175,14 @@ compileModule :: CompilerEnv -> String -> [(Symbol, (Expression, TypeScheme))] -
 compileModule =
     undefined
 
-builtinPlus :: (ValueRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
-builtinPlus _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
+builtinIOp buildfun _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
     let name = "add"
-    val <- withCString name (buildAdd builder v1 v2)
+    val <- withCString name (buildfun builder v1 v2)
     return $ CompiledValue val texp
+
+builtinPlus = builtinIOp buildAdd
+builtinMinus = builtinIOp buildSub
+builtinMul = builtinIOp buildMul
 
 {-
 -- From LLVM Core.h

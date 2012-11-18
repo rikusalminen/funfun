@@ -117,7 +117,8 @@ opExpr =
     buildExpressionParser opTable applicationExpr
     where
     opTable = [
-        [Infix (inf "+") AssocLeft],
+        [Infix (inf "*") AssocLeft],
+        [Infix (inf "+") AssocLeft, Infix (inf "-") AssocLeft],
         [Postfix typeDeclTail]
         ]
     inf op = do

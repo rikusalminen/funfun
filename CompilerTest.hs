@@ -24,9 +24,13 @@ builtInTypeEnv = [
     ("fooo", Scheme [] (FunctionType [Constructor "Int" []] (Constructor "Int" []))),
     ("x", Scheme [] (Constructor "Int" [])),
     ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("-", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("*", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
     ("eq", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Bool" [])))]
 builtInCompilerEnv = [
     ("+", CompiledBuiltIn builtinPlus),
+    ("-", CompiledBuiltIn builtinMinus),
+    ("*", CompiledBuiltIn builtinMul),
     ("eq", CompiledBuiltIn builtinEq)
     ]
 
