@@ -25,12 +25,13 @@ compile filename source = do
     let Right ast = parse parser filename source
     let optimized = depAnalysis ast
     -- no free variables!
-    let typeEnv = Map.fromList [("x", Scheme [] (Constructor "Int" []))]
+
+    let typeEnv = Map.fromList [("x", Scheme [] (Constructor "Int" [])), ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" [])))]
     let Right (sub, texp) = typeCheck typeEnv optimized
     let texp' = substitute sub texp
 
     bracket (withCString filename moduleCreateWithName) disposeModule $ \mod -> do
-        let compilerEnv = []
+        let compilerEnv = [Map.fromList [("+", CompiledBuiltIn builtinPlus)]]
         fun <- compileFunction mod compilerEnv "fooo" ["x"] optimized (FunctionType [texp'] texp')
 
         withCString (filename ++ ".bc") (writeBitcodeToFile mod)

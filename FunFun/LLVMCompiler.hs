@@ -1,10 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module FunFun.LLVMCompiler (
+    CompiledValue(..),
     compileType,
     compileExp,
     compileFunction,
     compileModule,
-    compileTest
+    compileTest,
+    builtinPlus
     ) where
 
 import qualified Data.Map as Map
@@ -49,7 +51,7 @@ compileType _ =
 
 data CompiledValue =
     CompiledValue ValueRef TypeExp |
-    CompiledBuiltIn ([CompiledValue] -> CompiledValue)
+    CompiledBuiltIn (ValueRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
 
 instance Show CompiledValue where
     show (CompiledValue ref texp) = "CompiledValue " ++ show ref ++ " (" ++ show texp ++ ")"
@@ -65,13 +67,24 @@ lookupEnv (frame:frames) ident =
       Nothing -> lookupEnv frames ident
 
 compileExp :: ValueRef -> BuilderRef -> CompilerEnv -> Expression -> TypeExp -> IO CompiledValue
-compileExp builder fun env (Constant (IntValue i) _) typ =
-    return $ CompiledValue (constInt (compileType typ) (fromIntegral i) (fromIntegral 0)) typ
-compileExp builder fun env (Constant (FloatValue f) _) typ =
+compileExp _ _ _ (Constant (IntValue i) _) typ = do
+    --return $ CompiledValue (constInt (compileType typ) (fromIntegral i) (fromIntegral 0)) typ
+    let typ' = (Constructor "Int" [])
+    return $ CompiledValue (constInt (compileType typ') (fromIntegral i) (fromIntegral 0)) typ'
+compileExp _ _ _ (Constant (FloatValue f) _) typ =
     return $ CompiledValue (constReal (compileType typ) (CDouble f)) typ
-compileExp builder fun env (Variable ident _) typ =
+compileExp _ _ env (Variable ident _) typ =
     return . fromJust . lookupEnv env $ ident
-compileExp builder fun env exp typ =
+compileExp f builder env (Application fun args _) typ = do
+    fun' <- compileExp f builder env fun undefined -- TODO: fix undefined
+    args' <- mapM (\a -> compileExp f builder env a undefined) args
+
+    case fun' of
+      (CompiledValue ref texp) -> do
+          undefined
+      (CompiledBuiltIn emit) ->
+          emit f builder env args' typ
+compileExp _ _ _ _ _ =
     error "Invalid expression"
 
 compileFunction :: ModuleRef -> CompilerEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
@@ -90,15 +103,22 @@ compileFunction mod env name args exp typ@(FunctionType argt ret) = do
 
     e <- compileExp f builder env' exp ret
     let val e = case e of
-            CompiledValue val typ -> val
-            CompiledBuiltIn f -> val (f [])
+            CompiledValue val typ -> return val
+            CompiledBuiltIn emit -> val =<< emit f builder env [] ret
+    v <- val e
 
-    ret <- buildRet builder (val e)
+    ret <- buildRet builder v
     return f
 
 compileModule :: CompilerEnv -> String -> [(Symbol, (Expression, TypeScheme))] -> IO ModuleRef
 compileModule =
     undefined
+
+builtinPlus :: (ValueRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
+builtinPlus _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
+    let name = "add"
+    val <- withCString name (buildAdd builder v1 v2)
+    return $ CompiledValue val texp
 
 compileTest name = do
     let modname = name
