@@ -55,7 +55,7 @@ compileType _ =
 
 data CompiledValue =
     CompiledValue ValueRef TypeExp |
-    CompiledBuiltIn (ValueRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
+    CompiledBuiltIn (ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
 
 instance Show CompiledValue where
     show (CompiledValue ref texp) = "CompiledValue " ++ show ref ++ " (" ++ show texp ++ ")"
@@ -79,53 +79,54 @@ emitCall builder name fun args = do
             buildCall builder fun ptr (fromIntegral . length $ args) cname
 
 
-apply :: ValueRef -> BuilderRef -> CompilerEnv -> CompiledValue -> [CompiledValue] -> TypeExp -> IO CompiledValue
-apply f builder env (CompiledValue ref texp) args typ = do
+apply :: ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> CompiledValue -> [CompiledValue] -> TypeExp -> IO CompiledValue
+apply f _ builder env (CompiledValue ref texp) args typ = do
     ref <- emitCall builder "" ref [val | (CompiledValue val _) <- args]
     return $ CompiledValue ref typ
-apply f builder env (CompiledBuiltIn emit) args typ =
-    emit f builder env args typ
+apply f bb builder env (CompiledBuiltIn emit) args typ =
+    emit f bb builder env args typ
 
-compileExp :: ValueRef -> BuilderRef -> CompilerEnv -> TypeEnv -> Expression -> TypeExp -> IO CompiledValue
-compileExp _ _ _ _ (Constant (IntValue i) _) typ = do
+compileExp :: ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> TypeEnv -> Expression -> TypeExp -> IO CompiledValue
+compileExp _ _ _ _ _ (Constant (IntValue i) _) typ = do
     return $ CompiledValue (constInt (compileType typ) (fromIntegral i) (fromIntegral 0)) typ
 
-compileExp _ _ _ _ (Constant (FloatValue f) _) typ =
+compileExp _ _ _ _ _ (Constant (FloatValue f) _) typ =
     return $ CompiledValue (constReal (compileType typ) (CDouble f)) typ
 
-compileExp _ _ env tenv exp@(Variable ident _) typ = do
+compileExp _ _ _ env tenv exp@(Variable ident _) typ = do
     return . fromJust . lookupEnv env $ ident
 
-compileExp f builder env tenv (Application fun args _) typ = do
+compileExp f bb builder env tenv (Application fun args _) typ = do
     let Right funt@(FunctionType argt rett) = runTC $ do
         (sub, (funt:argt)) <- tcList tenv (fun:args)
         sub' <- unify sub (funt, FunctionType argt typ)
         return $ substitute sub' funt
 
-    fun' <- compileExp f builder env tenv fun funt
-    args' <- mapM (\(e, t) -> compileExp f builder env tenv e t) $ zip args argt
-    apply f builder env fun' args' rett
+    fun' <- compileExp f bb builder env tenv fun funt
+    args' <- mapM (\(e, t) -> compileExp f bb builder env tenv e t) $ zip args argt
+    apply f bb builder env fun' args' rett
 
-compileExp f builder env tenv (Conditional cond cons alt _) typ = do
-    (CompiledValue condv _) <- compileExp f builder env tenv cond (Constructor "Bool" [])
+compileExp f bb builder env tenv (Conditional cond cons alt _) typ = do
+    (CompiledValue condv _) <- compileExp f bb builder env tenv cond (Constructor "Bool" [])
 
-    thenbb <- withCString "then" (appendBasicBlock f)
-    elsebb <- withCString "else" (appendBasicBlock f)
-    endbb <- withCString "endif" (appendBasicBlock f)
+    endbb <- withCString "endif" (insertBasicBlock bb)
+    elsebb <- withCString "else" (insertBasicBlock endbb)
+    thenbb <- withCString "then" (insertBasicBlock elsebb)
 
     buildCondBr builder condv thenbb elsebb
 
     positionAtEnd builder thenbb
-    (CompiledValue thenv _) <- compileExp f builder env tenv cons typ
+    (CompiledValue thenv _) <- compileExp f elsebb builder env tenv cons typ
     buildBr builder endbb
+    thenbb' <- getInsertBlock builder
 
     positionAtEnd builder elsebb
-    (CompiledValue elsev _) <- compileExp f builder env tenv alt typ
+    (CompiledValue elsev _) <- compileExp f endbb builder env tenv alt typ
     buildBr builder endbb
+    elsebb' <- getInsertBlock builder
 
     positionAtEnd builder endbb
-
-    phi <- phinode "phi" [(thenv, thenbb), (elsev, elsebb)]
+    phi <- phinode "phi" [(thenv, thenbb'), (elsev, elsebb')]
 
     return $ CompiledValue phi typ
     where
@@ -139,7 +140,7 @@ compileExp f builder env tenv (Conditional cond cons alt _) typ = do
                 addIncoming phi valptr bbptr (fromIntegral $ length incoming)
                 return phi
 
-compileExp _ _ _ _ _ _ =
+compileExp _ _ _ _ _ _ _ =
     error "Invalid expression"
 
 
@@ -162,20 +163,24 @@ compileFunction mod env tenv name args exp typ@(FunctionType argt ret) = do
     let tenv' = tframe `Map.union` tframe' `Map.union` tenv
 
     bb <- withCString "" (appendBasicBlock f)
+    end <- withCString "end" (appendBasicBlock f)
 
     builder <- createBuilder
     positionAtEnd builder bb
 
-    (CompiledValue v _) <- compileExp f builder env' tenv' exp ret
+    (CompiledValue v _) <- compileExp f end builder env' tenv' exp ret
 
+    buildBr builder end
+    positionAtEnd builder end
     ret <- buildRet builder v
+
     return f
 
 compileModule :: CompilerEnv -> String -> [(Symbol, (Expression, TypeScheme))] -> IO ModuleRef
 compileModule =
     undefined
 
-builtinIOp buildfun _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
+builtinIOp buildfun _ _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
     let name = "add"
     val <- withCString name (buildfun builder v1 v2)
     return $ CompiledValue val texp
@@ -199,8 +204,8 @@ builtinMul = builtinIOp buildMul
 00327   LLVMIntSLE      /**< signed less or equal */
 00328 } LLVMIntPredicate;
 -}
-builtinEq :: (ValueRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
-builtinEq _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
+builtinEq :: (ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
+builtinEq _ _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
     let name = "eq"
     val <- withCString name (buildICmp builder (fromIntegral 32) v1 v2)
     return $ CompiledValue val texp
