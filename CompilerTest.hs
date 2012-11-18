@@ -20,18 +20,28 @@ import FunFun.TypeChecker
 import FunFun.LLVMCompiler
 import FunFun.Pretty
 
+builtInTypeEnv = [
+    ("fooo", Scheme [] (FunctionType [Constructor "Int" []] (Constructor "Int" []))),
+    ("x", Scheme [] (Constructor "Int" [])),
+    ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("eq", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Bool" [])))]
+builtInCompilerEnv = [
+    ("+", CompiledBuiltIn builtinPlus),
+    ("eq", CompiledBuiltIn builtinEq)
+    ]
+
 compile :: String -> String -> IO ()
 compile filename source = do
     let Right ast = parse parser filename source
     let optimized = depAnalysis ast
     -- no free variables!
 
-    let typeEnv = Map.fromList [("x", Scheme [] (Constructor "Int" [])), ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" [])))]
+    let typeEnv = Map.fromList builtInTypeEnv
     let Right (sub, texp) = typeCheck typeEnv optimized
     let texp' = substitute sub texp
 
     bracket (withCString filename moduleCreateWithName) disposeModule $ \mod -> do
-        let compilerEnv = [Map.fromList [("+", CompiledBuiltIn builtinPlus)]]
+        let compilerEnv = [Map.fromList builtInCompilerEnv]
         fun <- compileFunction mod compilerEnv typeEnv "fooo" ["x"] optimized (FunctionType [texp'] texp')
 
         withCString (filename ++ ".bc") (writeBitcodeToFile mod)
