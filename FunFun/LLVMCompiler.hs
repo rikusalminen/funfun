@@ -140,6 +140,14 @@ compileExp f bb builder env tenv (Conditional cond cons alt _) typ = do
                 addIncoming phi valptr bbptr (fromIntegral $ length incoming)
                 return phi
 
+compileExp f bb builder env tenv exp@(TypeDecl scheme exp' _) typ = do
+    let (Right typ') = runTC $ do
+        (sub, t) <- tc tenv exp
+        sub' <- unify sub (t, typ)
+        return $ substitute sub' typ
+
+    compileExp f bb builder env tenv exp' typ'
+
 compileExp _ _ _ _ _ _ _ =
     error "Invalid expression"
 
