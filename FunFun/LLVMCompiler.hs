@@ -5,13 +5,13 @@ module FunFun.LLVMCompiler (
     compileExp,
     compileFunction,
     compileModule,
-    builtinPlus,
-    builtinMinus,
-    builtinMul,
-    builtinEq
+    builtInTypeEnv,
+    builtInCompilerEnv,
+    builtInSymbols
     ) where
 
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Data.Maybe (fromJust)
 import Control.Exception (bracket)
 
@@ -53,9 +53,11 @@ compileType (FunctionType args ret) =
 compileType _ =
     error "Unknown type"
 
+type CompilerCtx = (ModuleRef, ValueRef, BasicBlockRef, BuilderRef, (CompilerEnv, TypeEnv))
+
 data CompiledValue =
     CompiledValue ValueRef TypeExp |
-    CompiledBuiltIn (ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
+    CompiledBuiltIn (CompilerCtx -> CompilerEnv -> TypeEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
 
 instance Show CompiledValue where
     show (CompiledValue ref texp) = "CompiledValue " ++ show ref ++ " (" ++ show texp ++ ")"
@@ -78,36 +80,35 @@ emitCall builder name fun args = do
             mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] args]
             buildCall builder fun ptr (fromIntegral . length $ args) cname
 
-
-apply :: ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> CompiledValue -> [CompiledValue] -> TypeExp -> IO CompiledValue
-apply f _ builder env (CompiledValue ref texp) args typ = do
+apply :: CompilerCtx -> CompilerEnv -> TypeEnv -> CompiledValue -> [CompiledValue] -> TypeExp -> IO CompiledValue
+apply (_, _, _, builder, _) env tenv (CompiledValue ref texp) args typ = do
     ref <- emitCall builder "" ref [val | (CompiledValue val _) <- args]
     return $ CompiledValue ref typ
-apply f bb builder env (CompiledBuiltIn emit) args typ =
-    emit f bb builder env args typ
+apply ctx env tenv (CompiledBuiltIn emit) args typ =
+    emit ctx env tenv args typ
 
-compileExp :: ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> TypeEnv -> Expression -> TypeExp -> IO CompiledValue
-compileExp _ _ _ _ _ (Constant (IntValue i) _) typ = do
+compileExp :: CompilerCtx -> CompilerEnv -> TypeEnv -> Expression -> TypeExp -> IO CompiledValue
+compileExp _ _ _ (Constant (IntValue i) _) typ = do
     return $ CompiledValue (constInt (compileType typ) (fromIntegral i) (fromIntegral 0)) typ
 
-compileExp _ _ _ _ _ (Constant (FloatValue f) _) typ =
+compileExp _ _ _ (Constant (FloatValue f) _) typ =
     return $ CompiledValue (constReal (compileType typ) (CDouble f)) typ
 
-compileExp _ _ _ env tenv exp@(Variable ident _) typ = do
+compileExp _ env tenv exp@(Variable ident _) typ = do
     return . fromJust . lookupEnv env $ ident
 
-compileExp f bb builder env tenv (Application fun args _) typ = do
+compileExp ctx env tenv (Application fun args _) typ = do
     let Right funt@(FunctionType argt rett) = runTC $ do
         (sub, (funt:argt)) <- tcList tenv (fun:args)
         sub' <- unify sub (funt, FunctionType argt typ)
         return $ substitute sub' funt
 
-    fun' <- compileExp f bb builder env tenv fun funt
-    args' <- mapM (\(e, t) -> compileExp f bb builder env tenv e t) $ zip args argt
-    apply f bb builder env fun' args' rett
+    fun' <- compileExp ctx env tenv fun funt
+    args' <- mapM (\(e, t) -> compileExp ctx env tenv e t) $ zip args argt
+    apply ctx env tenv fun' args' rett
 
-compileExp f bb builder env tenv (Conditional cond cons alt _) typ = do
-    (CompiledValue condv _) <- compileExp f bb builder env tenv cond (Constructor "Bool" [])
+compileExp ctx@(mod, f, bb, builder, modenvs) env tenv (Conditional cond cons alt _) typ = do
+    (CompiledValue condv _) <- compileExp ctx env tenv cond (Constructor "Bool" [])
 
     endbb <- withCString "endif" (insertBasicBlock bb)
     elsebb <- withCString "else" (insertBasicBlock endbb)
@@ -116,12 +117,12 @@ compileExp f bb builder env tenv (Conditional cond cons alt _) typ = do
     buildCondBr builder condv thenbb elsebb
 
     positionAtEnd builder thenbb
-    (CompiledValue thenv _) <- compileExp f elsebb builder env tenv cons typ
+    (CompiledValue thenv _) <- compileExp (mod, f, elsebb, builder, modenvs) env tenv cons typ
     buildBr builder endbb
     thenbb' <- getInsertBlock builder
 
     positionAtEnd builder elsebb
-    (CompiledValue elsev _) <- compileExp f endbb builder env tenv alt typ
+    (CompiledValue elsev _) <- compileExp (mod, f, endbb, builder, modenvs) env tenv alt typ
     buildBr builder endbb
     elsebb' <- getInsertBlock builder
 
@@ -140,15 +141,22 @@ compileExp f bb builder env tenv (Conditional cond cons alt _) typ = do
                 addIncoming phi valptr bbptr (fromIntegral $ length incoming)
                 return phi
 
-compileExp f bb builder env tenv exp@(TypeDecl scheme exp' _) typ = do
+compileExp ctx env tenv exp@(TypeDecl scheme exp' _) typ = do
     let (Right typ') = runTC $ do
         (sub, t) <- tc tenv exp
         sub' <- unify sub (t, typ)
         return $ substitute sub' typ
 
-    compileExp f bb builder env tenv exp' typ'
+    compileExp ctx env tenv exp' typ'
 
-compileExp _ _ _ _ _ _ _ =
+compileExp (mod, _, _, _, (modenv, modtenv)) env tenv exp@(Lambda args body _) typ
+    | freeVariables exp `Set.difference` Set.unions (map Map.keysSet modenv) /= Set.empty =
+        error $ "Can't compile lambdas with free variables: " ++ show (freeVariables exp)
+    | otherwise = do
+        f <- compileFunction mod modenv modtenv "lambda" args body typ
+        return $ CompiledValue f typ
+
+compileExp _ _ _ _ _ =
     error "Invalid expression"
 
 
@@ -176,7 +184,7 @@ compileFunction mod env tenv name args exp typ@(FunctionType argt ret) = do
     builder <- createBuilder
     positionAtEnd builder bb
 
-    (CompiledValue v _) <- compileExp f end builder env' tenv' exp ret
+    (CompiledValue v _) <- compileExp (mod, f, end, builder, (env, tenv)) env' tenv' exp ret
 
     buildBr builder end
     positionAtEnd builder end
@@ -188,14 +196,13 @@ compileModule :: CompilerEnv -> String -> [(Symbol, (Expression, TypeScheme))] -
 compileModule =
     undefined
 
-builtinIOp buildfun _ _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
-    let name = "add"
+builtinIOp (buildfun, name) (_, _, _, builder, _) env tenv [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
     val <- withCString name (buildfun builder v1 v2)
     return $ CompiledValue val texp
 
-builtinPlus = builtinIOp buildAdd
-builtinMinus = builtinIOp buildSub
-builtinMul = builtinIOp buildMul
+builtinPlus = builtinIOp (buildAdd, "add")
+builtinMinus = builtinIOp (buildSub, "sub")
+builtinMul = builtinIOp (buildMul, "mul")
 
 {-
 -- From LLVM Core.h
@@ -212,8 +219,21 @@ builtinMul = builtinIOp buildMul
 00327   LLVMIntSLE      /**< signed less or equal */
 00328 } LLVMIntPredicate;
 -}
-builtinEq :: (ValueRef -> BasicBlockRef -> BuilderRef -> CompilerEnv -> [CompiledValue] -> TypeExp -> IO CompiledValue)
-builtinEq _ _ builder _ [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
+builtinEq (_, _, _, builder, _) env tenv [l@(CompiledValue v1 t1), r@(CompiledValue v2 t2)] texp = do
     let name = "eq"
     val <- withCString name (buildICmp builder (fromIntegral 32) v1 v2)
     return $ CompiledValue val texp
+
+builtInTypeEnv = Map.fromList [
+    ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("-", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("*", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
+    ("eq", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Bool" [])))]
+builtInCompilerEnv = [Map.fromList [
+    ("+", CompiledBuiltIn builtinPlus),
+    ("-", CompiledBuiltIn builtinMinus),
+    ("*", CompiledBuiltIn builtinMul),
+    ("eq", CompiledBuiltIn builtinEq)
+    ]]
+
+builtInSymbols = Set.unions (map Map.keysSet builtInCompilerEnv)

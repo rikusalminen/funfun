@@ -6,6 +6,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Storable
 import Foreign.Ptr
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Control.Exception (bracket)
 
 import LLVM.FFI.Core hiding (sizeOf)
@@ -14,39 +15,36 @@ import LLVM.FFI.BitWriter
 import Text.Parsec (parse)
 
 import FunFun.Parser
+import FunFun.AST
 import FunFun.DependencyAnalysis
 import FunFun.Types
 import FunFun.TypeChecker
 import FunFun.LLVMCompiler
 import FunFun.Pretty
 
-builtInTypeEnv = [
-    ("fooo", Scheme [] (FunctionType [Constructor "Int" []] (Constructor "Int" []))),
-    ("x", Scheme [] (Constructor "Int" [])),
-    ("+", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
-    ("-", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
-    ("*", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Int" []))),
-    ("eq", Scheme [] (FunctionType [Constructor "Int" [], Constructor "Int" []] (Constructor "Bool" [])))]
-builtInCompilerEnv = [
-    ("+", CompiledBuiltIn builtinPlus),
-    ("-", CompiledBuiltIn builtinMinus),
-    ("*", CompiledBuiltIn builtinMul),
-    ("eq", CompiledBuiltIn builtinEq)
-    ]
-
 compile :: String -> String -> IO ()
 compile filename source = do
     let Right ast = parse parser filename source
-    let optimized = depAnalysis ast
-    -- no free variables!
 
-    let typeEnv = Map.fromList builtInTypeEnv
-    let Right (sub, texp) = typeCheck typeEnv optimized
+    let freeVars = freeVariables ast `Set.difference` builtInSymbols
+    let ast' = if freeVars == Set.empty then ast else Lambda (Set.toList freeVars) ast (sourcePos ast)
+
+    let optimized = depAnalysis ast'
+    let Right (sub, texp) = typeCheck builtInTypeEnv optimized
     let texp' = substitute sub texp
 
+    let typ = case texp' of
+            typ@(FunctionType _ _) -> typ
+            t -> FunctionType [] t
+
+    putStrLn $ (prettyprint optimized) ++ " :: " ++ (prettyprintType typ)
+
     bracket (withCString filename moduleCreateWithName) disposeModule $ \mod -> do
-        let compilerEnv = [Map.fromList builtInCompilerEnv]
-        fun <- compileFunction mod compilerEnv typeEnv "fooo" ["x"] optimized (FunctionType [texp'] texp')
+        fun <- case optimized of
+            (Lambda args body _) ->
+                compileFunction mod builtInCompilerEnv builtInTypeEnv "lambda" args body typ
+            _ ->
+                compileFunction mod builtInCompilerEnv builtInTypeEnv "fooo" [] optimized typ
 
         withCString (filename ++ ".bc") (writeBitcodeToFile mod)
         return ()
