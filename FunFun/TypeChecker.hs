@@ -3,7 +3,9 @@ module FunFun.TypeChecker (
     TC(),
     runTC,
     unify,
+    addDecls,
     tcList,
+    tcDecls,
     tc,
     typeCheck
     ) where
@@ -101,6 +103,29 @@ tcList env xs =
         (sub', e) <- tc env ast
         return (compose sub' sub, exps ++ [e])
 
+tcDecls :: TypeEnv -> LetType -> [(Symbol, Expression)] -> TC (Substitution, TypeEnv)
+tcDecls env NonRec decls = do
+    let (names, vals) = unzip decls
+    (sub, ts) <- tcList env vals
+    env' <- addDecls (substituteEnv sub env) names ts
+    return (Map.empty, env') -- TODO: should I return sub or Map.empty?
+tcDecls env Rec decls = do
+    newVars <- newTypeVars (length decls)
+    let (names, vals) = unzip decls
+    let newEnv = (Map.fromList [(name, Scheme [] (TypeVar var)) | (name, var) <- zip names newVars])
+    (sub, ts) <- tcList (newEnv `Map.union` env) vals
+
+    let env' = substituteEnv sub env
+    let newEnv' = substituteEnv sub newEnv
+    let ts' = [x | (Scheme [] x) <- map (Maybe.fromJust . flip Map.lookup newEnv') names]
+    sub' <- foldM unify sub (zip ts ts')
+
+    let newEnv'' = substituteEnv sub' newEnv'
+    let ts'' = [x | (Scheme [] x) <- map (Maybe.fromJust . flip Map.lookup newEnv'') names]
+    env'' <- addDecls (substituteEnv sub' env') names ts''
+
+    return (sub', env'')
+
 tc :: TypeEnv -> Expression -> TC (Substitution, TypeExp)
 tc env (Constant value _) =
     case value of
@@ -138,28 +163,13 @@ tc env (Conditional cond cons alt _) = do
     return (sub'', substitute sub'' const)
 
 tc env (Let NonRec decls body _) = do
-    let (names, vals) = unzip decls
-    (sub, ts) <- tcList env vals
-    env' <- addDecls (substituteEnv sub env) names ts
+    (_, env') <- tcDecls env NonRec decls
     tc env' body
 
 tc env (Let Rec decls body _) = do
-    newVars <- newTypeVars (length decls)
-    let (names, vals) = unzip decls
-    let newEnv = (Map.fromList [(name, Scheme [] (TypeVar var)) | (name, var) <- zip names newVars])
-    (sub, ts) <- tcList (newEnv `Map.union` env) vals
-
-    let env' = substituteEnv sub env
-    let newEnv' = substituteEnv sub newEnv
-    let ts' = [x | (Scheme [] x) <- map (Maybe.fromJust . flip Map.lookup newEnv') names]
-    sub' <- foldM unify sub (zip ts ts')
-
-    let newEnv'' = substituteEnv sub' newEnv'
-    let ts'' = [x | (Scheme [] x) <- map (Maybe.fromJust . flip Map.lookup newEnv'') names]
-    env'' <- addDecls (substituteEnv sub' env') names ts''
-
-    (sub'', t) <- tc env'' body
-    return $ (compose sub' sub'', t)
+    (sub, env') <- tcDecls env Rec decls
+    (sub', t) <- tc env' body
+    return $ (compose sub sub', t)
 
 tc env (TypeDecl (Scheme names t) body _) = do
     typevars <- newTypeVars (length names)

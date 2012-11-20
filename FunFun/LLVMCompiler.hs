@@ -12,6 +12,7 @@ module FunFun.LLVMCompiler (
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import qualified Data.Maybe as Maybe
 import Data.Maybe (fromJust)
 import Control.Exception (bracket)
 
@@ -28,6 +29,7 @@ import LLVM.FFI.BitWriter
 import FunFun.AST
 import FunFun.Types hiding (floatType)
 import FunFun.Values
+import FunFun.DependencyAnalysis
 import FunFun.TypeChecker
 import FunFun.Pretty
 
@@ -156,6 +158,44 @@ compileExp (mod, _, _, _, (modenv, modtenv)) env tenv exp@(Lambda args body _) t
         f <- compileFunction mod modenv modtenv "lambda" args body typ
         return $ CompiledValue f typ
 
+compileExp ctx env tenv exp@(Let NonRec decls body _) typ = do
+    let Right tenv' = runTC $ do
+        (sub, tenv') <- tcDecls tenv NonRec decls
+
+        (sub', t) <- tc tenv' body
+        sub'' <- unify sub (t, typ)
+        return $ substituteEnv sub'' tenv'
+
+    let (names, vals) = unzip decls
+    let ts = [t | Just (Scheme [] t) <- map (flip Map.lookup tenv') names]
+    vals' <- mapM (\(e, t) -> compileExp ctx env tenv e t) (zip vals ts)
+
+    let env' = Map.fromList (zip names vals') : env
+    compileExp ctx env' tenv' body typ
+
+compileExp ctx@(mod, fun, bb, builder, (modenv, modtenv)) env tenv exp@(Let Rec decls body src) typ = do
+    let Right tenv' = runTC $ do
+        (sub, tenv') <- tcDecls tenv Rec decls
+        (sub', t) <- tc tenv' body
+        sub'' <- unify sub' (t, typ)
+        return (substituteEnv sub'' tenv')
+
+    let funs = [(name, fun, Maybe.fromJust . flip Map.lookup tenv' $ name) | (name, fun@(Lambda _ _ _)) <- decls]
+    funs' <- mapM (\(name, _, (Scheme [] t)) -> createFunction mod name t ExternalLinkage) funs
+
+    let env' = Map.fromList [(name, CompiledValue val t) | ((name, _, (Scheme [] t)), val) <- zip funs funs'] : env
+
+    mapM_ (def env' tenv') (zip funs funs')
+
+    let funnames = [name | (name, _, _) <- funs]
+    let decls' = [decl | decl@(name, _) <- decls, not (name `elem` funnames)]
+    let exp' = depAnalysis (Let Rec decls' body src)
+
+    compileExp ctx env' tenv' exp' typ
+    where
+    def env tenv ((name, (Lambda args body _), (Scheme [] t)), f) =
+        defineFunction mod f env tenv name args body t
+
 compileExp _ _ _ _ _ =
     error "Invalid expression"
 
@@ -169,7 +209,10 @@ createFunction mod name typ@(FunctionType _ _) linkage = do
 compileFunction :: ModuleRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
 compileFunction mod env tenv name args exp typ@(FunctionType argt ret) = do
     f <- createFunction mod name typ ExternalLinkage
+    defineFunction mod f env tenv name args exp typ
 
+defineFunction :: ModuleRef -> ValueRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
+defineFunction mod f env tenv name args exp typ@(FunctionType argt ret) = do
     let frame = Map.fromList [(sym, CompiledValue (getParam f (fromIntegral i)) typ) | (i, sym, typ) <- zip3 [0..] args argt]
     let frame' = Map.fromList [(name, CompiledValue f typ)]
     let env' = frame : frame' : env
