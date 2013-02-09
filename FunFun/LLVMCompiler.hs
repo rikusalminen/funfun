@@ -60,17 +60,6 @@ getelementptrInt :: BuilderRef -> ValueRef -> [Int] -> String -> IO ValueRef
 getelementptrInt builder value indices name =
    getelementptr builder value [constInt int32Type (fromIntegral i) (fromIntegral 0) | i <- indices] name
 
-getelementptrConst :: ValueRef -> [ValueRef] -> ValueRef
-getelementptrConst value indices =
-    unsafePerformIO $
-    allocaBytes (length indices * sizeOf (undefined :: ValueRef)) $ \(ptr :: Ptr ValueRef) -> do
-        mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] indices]
-        return $ constGEP value ptr (fromIntegral . length $ indices)
-
-getelementptrConstInt :: ValueRef -> [Int] -> ValueRef
-getelementptrConstInt value indices =
-   getelementptrConst value [constInt int32Type (fromIntegral i) (fromIntegral 0) | i <- indices]
-
 compileType :: TypeExp -> TypeRef
 compileType (TypeVar _) =
     error "Can't compile types with type variables"
@@ -313,7 +302,7 @@ defineFunction mod f env tenv name args exp typ@(FunctionType argt ret) captured
     let closuret = Map.fromList [(sym, Scheme [] texp) | (sym, texp) <- captured]
 
     let extractClosure (i, (name, texp)) = do
-        let ptr = getelementptrConstInt (getParam f (fromIntegral 0)) [0, i]
+        ptr <- getelementptrInt builder (getParam f (fromIntegral 0)) [0, i] (name ++ "_ptr")
         val <- withCString name (buildLoad builder ptr)
         return $ CompiledValue val texp
 
