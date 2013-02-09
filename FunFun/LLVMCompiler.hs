@@ -50,6 +50,16 @@ funType ret args =
         mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] args]
         return $ functionType ret ptr (fromIntegral . length $ args) varargs
 
+getelementptr :: BuilderRef -> ValueRef -> [ValueRef] -> String -> IO ValueRef
+getelementptr builder value indices name =
+    allocaBytes (length indices * sizeOf (undefined :: ValueRef)) $ \(ptr :: Ptr ValueRef) -> do
+        mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] indices]
+        withCString name (buildGEP builder value ptr (fromIntegral . length $ indices))
+
+getelementptrInt :: BuilderRef -> ValueRef -> [Int] -> String -> IO ValueRef
+getelementptrInt builder value indices name =
+   getelementptr builder value [constInt int32Type (fromIntegral i) (fromIntegral 0) | i <- indices] name
+
 getelementptrConst :: ValueRef -> [ValueRef] -> ValueRef
 getelementptrConst value indices =
     unsafePerformIO $
@@ -171,12 +181,54 @@ compileExp ctx env tenv exp@(TypeDecl scheme exp' _) typ = do
 
     compileExp ctx env tenv exp' typ'
 
-compileExp (mod, _, _, _, (modenv, modtenv)) env tenv exp@(Lambda args body _) typ
-    | freeVariables exp `Set.difference` Set.unions (map Map.keysSet modenv) /= Set.empty =
-        error $ "Can't compile lambdas with free variables: " ++ show (freeVariables exp)
-    | otherwise = do
+compileExp (mod, _, _, builder, (modenv, modtenv)) env tenv exp@(Lambda args body _) typ
+    | typeVarsInExp typ /= Set.empty =
+        -- TODO: implement some kind of "templates"
+        error "Cannot compile polymorphic lambda functions"
+    | freeVariables exp `Set.difference` Set.unions (map Map.keysSet modenv) == Set.empty = do
         f <- compileFunction mod modenv modtenv "lambda" args body typ []
         return $ CompiledValue f typ
+    | otherwise = do
+        let freevar = Set.toList $ freeVariables exp `Set.difference` Set.unions (map Map.keysSet modenv)
+        let lookupType name = let Just (Scheme [] texp) = Map.lookup name tenv in texp
+        let captured = [(name, lookupType name) | name <- freevar]
+        let closureType = struct (map (compileType . snd) captured)
+
+        fun <- compileFunction mod modenv modtenv "lambda" args body typ captured
+
+        buffer <- withCString "closure_buf" (buildAlloca builder closureType)
+
+        let storeClosure (i, name) = do
+            let Just (CompiledValue val _) = lookupEnv env name
+            ptr <- getelementptrInt builder buffer [0, i] (name ++ "_ptr")
+            buildStore builder val ptr
+
+        mapM_ storeClosure (zip [0..] freevar)
+
+        let i8ptr = pointerType int8Type (fromIntegral 0)
+
+        closurePtr <- withCString "closure_ptr" (buildBitCast builder buffer i8ptr)
+        trampPtr <- allocateTrampoline
+
+        trampolineInit <- withCString "llvm.init.trampoline" (\cname -> addFunction mod cname (funType voidType [i8ptr, i8ptr, i8ptr]))
+        trampolineAdjust <- withCString "llvm.adjust.trampoline" (\cname -> addFunction mod cname (funType i8ptr [i8ptr]))
+
+        funPtr <- withCString "fun_ptr" (buildBitCast builder fun i8ptr)
+
+        emitCall builder "" trampolineInit [trampPtr, funPtr, closurePtr]
+        tramp <- emitCall builder "trampoline" trampolineAdjust [trampPtr]
+
+        let funPtrType = pointerType (compileType typ) (fromIntegral 0)
+        funPtr <- withCString "trampoline_fun" (buildBitCast builder tramp funPtrType)
+
+        return $ CompiledValue funPtr typ
+        where
+        trampSize = 32
+        trampAlign = 4
+        allocateTrampoline = do
+            trampBuf <- withCString "trampoline_buf" (buildAlloca builder (arrayType int8Type (fromIntegral trampSize)))
+            setAlignment trampBuf (fromIntegral trampAlign)
+            getelementptrInt builder trampBuf [0, 0] "trampoline_ptr"
 
 compileExp ctx env tenv exp@(Let NonRec decls body _) typ = do
     let Right tenv' = runTC $ do
