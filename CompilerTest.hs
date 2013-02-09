@@ -42,9 +42,9 @@ compile filename source = do
     bracket (withCString filename moduleCreateWithName) disposeModule $ \mod -> do
         fun <- case optimized of
             (Lambda args body _) ->
-                compileFunction mod builtInCompilerEnv builtInTypeEnv "lambda" args body typ
+                compileFunction mod builtInCompilerEnv builtInTypeEnv "lambda" args body typ []
             _ ->
-                compileFunction mod builtInCompilerEnv builtInTypeEnv "fooo" [] optimized typ
+                compileFunction mod builtInCompilerEnv builtInTypeEnv "fooo" [] optimized typ []
 
         withCString (filename ++ ".bc") (writeBitcodeToFile mod)
         return ()

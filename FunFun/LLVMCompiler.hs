@@ -15,6 +15,7 @@ import qualified Data.Set as Set
 import qualified Data.Maybe as Maybe
 import Data.Maybe (fromJust)
 import Control.Exception (bracket)
+import Control.Monad (when)
 
 import Foreign.C.Types
 import Foreign.C.String
@@ -33,6 +34,14 @@ import FunFun.DependencyAnalysis
 import FunFun.TypeChecker
 import FunFun.Pretty
 
+struct :: [TypeRef] -> TypeRef
+struct elements =
+    unsafePerformIO $ do
+    let packed = 0
+    allocaBytes (length elements * sizeOf (undefined :: TypeRef)) $ \(ptr :: Ptr TypeRef) -> do
+        mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] elements]
+        return $ structType ptr (fromIntegral . length $ elements) packed
+
 funType :: TypeRef -> [TypeRef] -> TypeRef
 funType ret args =
     unsafePerformIO $ do
@@ -40,6 +49,17 @@ funType ret args =
     allocaBytes (length args * sizeOf (undefined :: TypeRef)) $ \(ptr :: Ptr TypeRef) -> do
         mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] args]
         return $ functionType ret ptr (fromIntegral . length $ args) varargs
+
+getelementptrConst :: ValueRef -> [ValueRef] -> ValueRef
+getelementptrConst value indices =
+    unsafePerformIO $
+    allocaBytes (length indices * sizeOf (undefined :: ValueRef)) $ \(ptr :: Ptr ValueRef) -> do
+        mapM_ (uncurry (pokeElemOff ptr)) [(i, ref) | (i, ref) <- zip [0..] indices]
+        return $ constGEP value ptr (fromIntegral . length $ indices)
+
+getelementptrConstInt :: ValueRef -> [Int] -> ValueRef
+getelementptrConstInt value indices =
+   getelementptrConst value [constInt int32Type (fromIntegral i) (fromIntegral 0) | i <- indices]
 
 compileType :: TypeExp -> TypeRef
 compileType (TypeVar _) =
@@ -155,7 +175,7 @@ compileExp (mod, _, _, _, (modenv, modtenv)) env tenv exp@(Lambda args body _) t
     | freeVariables exp `Set.difference` Set.unions (map Map.keysSet modenv) /= Set.empty =
         error $ "Can't compile lambdas with free variables: " ++ show (freeVariables exp)
     | otherwise = do
-        f <- compileFunction mod modenv modtenv "lambda" args body typ
+        f <- compileFunction mod modenv modtenv "lambda" args body typ []
         return $ CompiledValue f typ
 
 compileExp ctx env tenv exp@(Let NonRec decls body _) typ = do
@@ -181,7 +201,7 @@ compileExp ctx@(mod, fun, bb, builder, (modenv, modtenv)) env tenv exp@(Let Rec 
         return (substituteEnv sub'' tenv')
 
     let funs = [(name, fun, Maybe.fromJust . flip Map.lookup tenv' $ name) | (name, fun@(Lambda _ _ _)) <- decls]
-    funs' <- mapM (\(name, _, (Scheme [] t)) -> createFunction mod name t ExternalLinkage) funs
+    funs' <- mapM (\(name, _, (Scheme [] t)) -> createFunction mod name t ExternalLinkage []) funs
 
     let env' = Map.fromList [(name, CompiledValue val t) | ((name, _, (Scheme [] t)), val) <- zip funs funs'] : env
 
@@ -194,38 +214,62 @@ compileExp ctx@(mod, fun, bb, builder, (modenv, modtenv)) env tenv exp@(Let Rec 
     compileExp ctx env' tenv' exp' typ
     where
     def env tenv ((name, (Lambda args body _), (Scheme [] t)), f) =
-        defineFunction mod f env tenv name args body t
+        defineFunction mod f env tenv name args body t []
 
 compileExp _ _ _ _ _ =
     error "Invalid expression"
 
 
-createFunction :: ModuleRef -> String -> TypeExp -> Linkage -> IO ValueRef
-createFunction mod name typ@(FunctionType _ _) linkage = do
-    f <- withCString name (\cname -> addFunction mod cname (compileType typ))
+createFunction :: ModuleRef -> String -> TypeExp -> Linkage -> [(String, TypeExp)] -> IO ValueRef
+createFunction mod name typ@(FunctionType args ret) linkage captured = do
+    f <- withCString name (\cname -> addFunction mod cname compiledType)
     setLinkage f (fromLinkage linkage)
+
+    when (not . null $ captured) $ do
+        addAttribute (getParam f (fromIntegral 0)) (fromAttribute NestAttribute)
+
     return f
+    where
+    closureType = (pointerType (struct . map (compileType . snd) $ captured) (fromIntegral 0))
+    compiledType
+        | null captured = compileType typ
+        | otherwise =  funType (compileType ret) (closureType : map compileType args)
 
-compileFunction :: ModuleRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
-compileFunction mod env tenv name args exp typ@(FunctionType argt ret) = do
-    f <- createFunction mod name typ ExternalLinkage
-    defineFunction mod f env tenv name args exp typ
+compileFunction :: ModuleRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> [(String, TypeExp)] -> IO ValueRef
+compileFunction mod env tenv name args exp typ@(FunctionType argt ret) captured = do
+    f <- createFunction mod name typ ExternalLinkage captured
+    defineFunction mod f env tenv name args exp typ captured
 
-defineFunction :: ModuleRef -> ValueRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> IO ValueRef
-defineFunction mod f env tenv name args exp typ@(FunctionType argt ret) = do
-    let frame = Map.fromList [(sym, CompiledValue (getParam f (fromIntegral i)) typ) | (i, sym, typ) <- zip3 [0..] args argt]
+defineFunction :: ModuleRef -> ValueRef -> CompilerEnv -> TypeEnv -> String -> [Symbol] -> Expression -> TypeExp -> [(String, TypeExp)] -> IO ValueRef
+defineFunction mod f env tenv name args exp typ@(FunctionType argt ret) captured = do
+    let firstArg = if null captured then 0 else 1
+    let frame = Map.fromList [(sym, CompiledValue (getParam f (fromIntegral i)) typ) | (i, sym, typ) <- zip3 [firstArg..] args argt]
     let frame' = Map.fromList [(name, CompiledValue f typ)]
-    let env' = frame : frame' : env
 
     let tframe = Map.fromList [(sym, Scheme [] texp) | (sym, texp) <- zip args argt]
     let tframe' = Map.fromList [(name, Scheme [] typ)]
-    let tenv' = tframe `Map.union` tframe' `Map.union` tenv
+
+    let nameParameter (i, name) = withCString name $ setValueName (getParam f (fromIntegral i))
+    mapM_ nameParameter (zip [firstArg..] args)
 
     bb <- withCString "" (appendBasicBlock f)
     end <- withCString "end" (appendBasicBlock f)
 
     builder <- createBuilder
     positionAtEnd builder bb
+
+    let closuret = Map.fromList [(sym, Scheme [] texp) | (sym, texp) <- captured]
+
+    let extractClosure (i, (name, texp)) = do
+        let ptr = getelementptrConstInt (getParam f (fromIntegral 0)) [0, i]
+        val <- withCString name (buildLoad builder ptr)
+        return $ CompiledValue val texp
+
+    closurevals <- mapM extractClosure (zip [0..] captured)
+    let closure = Map.fromList $ zip (map fst captured) closurevals
+
+    let env' = frame : closure : frame' : env
+    let tenv' = tframe `Map.union` closuret `Map.union` tframe' `Map.union` tenv
 
     (CompiledValue v _) <- compileExp (mod, f, end, builder, (env, tenv)) env' tenv' exp ret
 
